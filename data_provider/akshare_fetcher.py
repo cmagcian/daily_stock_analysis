@@ -122,7 +122,17 @@ class AkShareFetcher(BaseFetcher):
         filter_markets = ["sh", "sz"] if market in (None, "all", "") else [market]
 
         for mkt in filter_markets:
-            secid_prefix = "1" if mkt == "sh" else "0"
+            # Eastmoney fs parameter format:
+            #   m:0+t:6  = Shanghai A-share
+            #   m:0+t:80 = Shenzhen A-share
+            #   m:1+t:2  = ChiNext (创业板)
+            #   m:1+t:23 = STAR Market (科创板)
+            fs_map = {
+                "sh": "m:0+t:6+m:1+t:23",   # Shanghai A-share + STAR Market
+                "sz": "m:0+t:80+m:1+t:2",   # Shenzhen A-share + ChiNext
+            }
+            fs_value = fs_map.get(mkt, "m:0+t:6+m:0+t:80+m:1+t:2+m:1+t:23")
+
             params = {
                 "pn":     "1",
                 "pz":     "6000",
@@ -131,7 +141,7 @@ class AkShareFetcher(BaseFetcher):
                 "fltt":   "2",
                 "invt":   "2",
                 "fid":    "f3",
-                "fs":     f"{secid_prefix}60::{mkt}",
+                "fs":     fs_value,
                 "fields": "f12,f14",   # code, name
             }
             try:
