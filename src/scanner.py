@@ -4,13 +4,16 @@ Consecutive up-stock scanner.
 
 Core logic: fetch recent trading days for each stock, find the longest
 sequence where each day's close is strictly greater than the previous day.
+Uses ThreadPoolExecutor for parallel scanning.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from data_provider.akshare_fetcher import AkShareFetcher
 from data_provider.base import ScanConfig
@@ -62,7 +65,7 @@ def find_consecutive_up(
         return None
 
     closes = [q.close for q in quotes]
-    dates  = [q.date  for q in quotes]
+    dates = [q.date for q in quotes]
     n = len(closes)
 
     max_streak = 0
@@ -89,23 +92,43 @@ def find_consecutive_up(
         return None
 
     start_idx = max_streak_end - max_streak + 1
-    streak_dates  = dates[start_idx: max_streak_end + 1]
+    streak_dates = dates[start_idx: max_streak_end + 1]
     streak_prices = closes[start_idx: max_streak_end + 1]
-    total_change  = (streak_prices[-1] / streak_prices[0] - 1) * 100 if streak_prices[0] > 0 else 0.0
+    total_change = (streak_prices[-1] / streak_prices[0] - 1) * 100 if streak_prices[0] > 0 else 0.0
 
     return ConsecutiveUpResult(
-        code           = code,
-        name           = name,
-        market         = market,
-        streak_start_date = streak_dates[0],
-        streak_end_date   = streak_dates[-1],
-        streak_days      = max_streak,
-        prices           = streak_prices,
-        dates            = streak_dates,
-        pct_change_total = round(total_change, 2),
-        latest_close     = closes[-1],
-        latest_date      = dates[-1],
+        code=code,
+        name=name,
+        market=market,
+        streak_start_date=streak_dates[0],
+        streak_end_date=streak_dates[-1],
+        streak_days=max_streak,
+        prices=streak_prices,
+        dates=streak_dates,
+        pct_change_total=round(total_change, 2),
+        latest_close=closes[-1],
+        latest_date=dates[-1],
     )
+
+
+def _scan_one(stock: dict, cfg: ScanConfig, fetcher: AkShareFetcher,
+              results: List[ConsecutiveUpResult], lock: threading.Lock) -> None:
+    """Scan a single stock and append result if matched."""
+    code = stock["code"]
+    name = stock["name"]
+    market = stock.get("market", "sh")
+
+    if cfg.exclude_st and fetcher.is_st_stock(name):
+        return
+    if cfg.exclude_kc_cy and fetcher.is_kc_cy_stock(code):
+        return
+
+    result = find_consecutive_up(code, name, market, config=cfg)
+    if result:
+        with lock:
+            results.append(result)
+            logger.info("[%d] %s %s %d days, +%.2f%%",
+                        len(results), code, name, result.streak_days, result.pct_change_total)
 
 
 def scan_stock_list(
@@ -114,47 +137,27 @@ def scan_stock_list(
     config: Optional[ScanConfig] = None,
 ) -> List[ConsecutiveUpResult]:
     """
-    Scan a list of stocks and return all matching results, sorted by change descending.
+    Scan a list of stocks concurrently and return all matching results.
     """
-    import time
-    import random
-
     cfg = config or get_config()
     fetcher = AkShareFetcher()
     results: List[ConsecutiveUpResult] = []
+    lock = threading.Lock()
     total = len(stocks)
-    skipped = 0
-    failed = 0
 
-    logger.info("Scanning %d stocks, consecutive up >= %d days", total, cfg.continuous_days)
+    # Use 10 concurrent workers for speed
+    max_workers = min(10, total)
+    logger.info("Scanning %d stocks concurrently (workers=%d), consecutive up >= %d days",
+                total, max_workers, cfg.continuous_days)
 
-    for idx, stock in enumerate(stocks):
-        code   = stock["code"]
-        name   = stock["name"]
-        market = stock.get("market", "sh")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_scan_one, stock, cfg, fetcher, results, lock): stock
+                   for stock in stocks}
+        for i, future in enumerate(as_completed(futures), 1):
+            if i % 100 == 0 or i == total:
+                logger.info("Progress: %d/%d, found %d so far", i, total, len(results))
 
-        if cfg.exclude_st and fetcher.is_st_stock(name):
-            skipped += 1
-            continue
-        if cfg.exclude_kc_cy and fetcher.is_kc_cy_stock(code):
-            skipped += 1
-            continue
-
-        result = find_consecutive_up(code, name, market, config=cfg)
-        if result:
-            results.append(result)
-            logger.info(
-                "[%d] %s %s %d days, +%.2f%%",
-                len(results), code, name, result.streak_days, result.pct_change_total,
-            )
-        else:
-            failed += 1
-
-        if (idx + 1) % 100 == 0:
-            logger.info("Progress: %d/%d, found %d, skipped %d, failed %d",
-                        idx + 1, total, len(results), skipped, failed)
-
-        time.sleep(random.uniform(0.05, cfg.request_delay))
-
-    logger.info("Done: %d found, %d skipped, %d failed", len(results), skipped, failed)
-    return sorted(results, key=lambda r: r.pct_change_total, reverse=True)
+    # Sort by pct_change descending
+    results.sort(key=lambda r: r.pct_change_total, reverse=True)
+    logger.info("Done: %d found out of %d scanned", len(results), total)
+    return results
