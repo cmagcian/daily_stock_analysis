@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""连续上涨扫描结果摘要生成脚本 - GitHub Actions 专用"""
+"""Summary generator for consecutive up-scan results."""
 import json
 import sys
 from datetime import date
@@ -9,7 +9,6 @@ def main():
     json_file = sys.argv[1]
     days = sys.argv[2]
     market = sys.argv[3]
-    count = sys.argv[4] if len(sys.argv) > 4 else "?"
 
     today = date.today().isoformat()
 
@@ -17,16 +16,16 @@ def main():
         data = json.load(f)
 
     lines = [
-        f"**[连续上涨扫描 {today}]**",
+        f"**[Consecutive Up Scan {today}]**",
         "",
-        f"连续 {days} 天上涨 · 市场 {market} · 找到 {len(data)} 只",
+        f"{days} consecutive up days | Market: {market} | Found: {len(data)} stocks",
         "",
     ]
     for r in data[:5]:
-        lines.append(f"{r['code']} {r.get('name','')} {r['streak_days']}天 +{r['pct_change']}%")
+        lines.append(f"{r['code']} {r.get('name','')} {r['streak_days']}days +{r['pct_change']}%")
     if len(data) > 5:
-        lines.append(f"... 共 {len(data)} 只，详见 Artifact")
-    lines.extend(["", "详情见 GitHub Actions 日志。"])
+        lines.append(f"... and {len(data) - 5} more, see Artifact")
+    lines.extend(["", "See GitHub Actions log for details."])
 
     print("\n".join(lines))
 
