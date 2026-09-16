@@ -179,5 +179,10 @@ jobs:
               && echo "✅ Discord 通知已发送" || echo "⚠️ Discord 通知发送失败"
           fi
 
-          # PushPlu
-      
+          # PushPlus
+          if [ -n "${PUSHPLUS_TOKEN}" ]; then
+            curl -s -X POST "https://www.pushplus.plus/send" \
+              -H "Content-Type: application/json" \
+              -d "{\"token\":\"${PUSHPLUS_TOKEN}\",\"title\":\"连续上涨扫描 ${today}\",\"content\":\"${summary}\"}" \
+              && echo "✅ PushPlus 通知已发送" || echo "⚠️ PushPlus 通知发送失败"
+          fi
