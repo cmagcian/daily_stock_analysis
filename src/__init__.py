@@ -1,2 +1,2 @@
 # -*- coding: utf-8 -*-
-"""连续上涨股票扫描器"""
+"""Daily scanner for consecutive up-trending stocks."""
