@@ -51,10 +51,6 @@ class AkShareFetcher(BaseFetcher):
             "Referer": "https://quote.eastmoney.com/",
         })
 
-    # ------------------------------------------------------------------
-    # 公共接口实现
-    # ------------------------------------------------------------------
-
     @property
     def name(self) -> str:
         return "akshare"
