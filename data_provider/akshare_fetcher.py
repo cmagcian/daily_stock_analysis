@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-AkShareFetcher - 主数据源
+AkShareFetcher - Primary data source
 
-数据来源：AkShare 库（东方财富底层接口）
-特点：免费、无需 Token、A 股数据全面
-防封禁策略：随机延迟 + 指数退避重试 + User-Agent 轮换
+Data source: Eastmoney push2 API (free, no token required)
+Anti-block strategy: random delay + exponential backoff retry + UA rotation
 """
 
 from __future__ import annotations
@@ -34,18 +33,16 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
 ]
 
-# 东方财富接口
 _EASTMONEY_LIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 _EASTMONEY_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 
 
 def _random_delay(low: float = 0.2, high: float = 0.6):
-    """随机延迟，避免触发限流"""
     time.sleep(random.uniform(low, high))
 
 
 class AkShareFetcher(BaseFetcher):
-    """AkShare 数据源实现（基于东方财富 push2 API）"""
+    """Data source using Eastmoney push2 API."""
 
     def __init__(self):
         self._session = requests.Session()
@@ -75,18 +72,7 @@ class AkShareFetcher(BaseFetcher):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> List[StockQuote]:
-        """
-        获取单只股票的日线数据
-
-        Args:
-            code:       6位股票代码
-            days:       最多返回的 K 线数量
-            start_date: 起始日期 YYYYMMDD（可选）
-            end_date:   结束日期 YYYYMMDD（可选）
-
-        Returns:
-            StockQuote 列表，按日期升序排列
-        """
+        """Get daily K-line data for a single stock."""
         secid = self._to_secid(code)
 
         if end_date is None:
@@ -98,8 +84,8 @@ class AkShareFetcher(BaseFetcher):
             "secid":   secid,
             "fields1": "f1,f2,f3,f4,f5,f6",
             "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-            "klt":     "101",       # 日K线
-            "fqt":     "1",         # 前复权
+            "klt":     "101",       # daily
+            "fqt":     "1",         # adjusted close
             "beg":     start_date,
             "end":     end_date,
             "lmt":     str(days),
@@ -135,15 +121,7 @@ class AkShareFetcher(BaseFetcher):
         return quotes
 
     def get_stock_list(self, market: Optional[str] = None) -> List[dict]:
-        """
-        获取沪深 A 股股票列表
-
-        Args:
-            market:  None/'all' = 沪深两市；'sh' = 仅沪市；'sz' = 仅深市
-
-        Returns:
-            [{"code": "600519", "name": "贵州茅台", "market": "sh"}, ...]
-        """
+        """Get A-share stock list from Eastmoney."""
         stocks: List[dict] = []
         filter_markets = ["sh", "sz"] if market in (None, "all", "") else [market]
 
@@ -180,21 +158,17 @@ class AkShareFetcher(BaseFetcher):
 
         return stocks
 
-    # ------------------------------------------------------------------
-    # 工具方法
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _to_secid(code: str) -> str:
-        """将 6 位代码转为东方财富 secid 格式（1.xxx = 沪市，0.xxx = 深市）"""
+        """Convert 6-digit code to Eastmoney secid format (1.xxx=SH, 0.xxx=SZ)."""
         return f"1.{code}" if code.startswith(("6", "5")) else f"0.{code}"
 
     @staticmethod
     def is_st_stock(name: str) -> bool:
-        """判断是否为 ST 股票"""
+        """Check if stock name indicates an ST (special treatment) stock."""
         return bool(name) and ("ST" in name.upper())
 
     @staticmethod
     def is_kc_cy_stock(code: str) -> bool:
-        """判断是否为科创板(688)或创业板(300)"""
+        """Check if stock is STAR Market (688) or ChiNext (300)."""
         return code.startswith(("688", "300"))
