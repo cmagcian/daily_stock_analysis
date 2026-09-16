@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-连续上涨股票扫描器 - 主入口
+Stock market scanner for consecutive up-trending stocks.
 
-用法：
-    python main.py                          # 默认参数运行
-    python main.py --days 7                 # 连续7天上涨
-    python main.py --days 5 --market sh     # 仅沪市
-    python main.py --days 10 --verbose      # 调试模式
-    python main.py --help                   # 帮助信息
+Usage:
+    python main.py                          # default: 5 consecutive up days
+    python main.py --days 7                 # 7 consecutive up days
+    python main.py --market sh              # Shanghai market only
+    python main.py --verbose                # debug mode
 """
 
 from __future__ import annotations
@@ -39,33 +38,27 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 # ------------------------------------------------------------------
-# 输出模块
+# Output helpers
 # ------------------------------------------------------------------
 
 def print_table(results: list[ConsecutiveUpResult]) -> None:
-    """在控制台以表格形式打印结果"""
     if not results:
-        print("\n未找到满足条件的股票。")
+        print("\nNo stocks match the criteria.")
         return
 
-    sep_line = "=" * 95
-    dash_line = (
-        "  "
-        + "-" * 10 + " " + "-" * 12 + " " + "-" * 4 + " "
-        + "-" * 12 + " " + "-" * 12 + " "
-        + "-" * 6 + " " + "-" * 12
-    )
-
-    print(f"\n{sep_line}")
-    print(f"  连续上涨股票筛选结果  (共 {len(results)} 只)")
-    print(f"{sep_line}")
+    sep = "=" * 95
+    print(f"\n{sep}")
+    print(f"  Consecutive Up Stocks ({len(results)} found)")
+    print(f"{sep}")
     header = (
-        f"  {'代码':<10} {'名称':<12} {'市场':<4} "
-        f"{'起始日期':<12} {'结束日期':<12} "
-        f"{'连续天数':>6} {'区间涨幅':>12}"
+        f"  {'Code':<10} {'Name':<12} {'Mkt':<4} "
+        f"{'Start Date':<12} {'End Date':<12} "
+        f"{'Days':>6} {'Change':>12}"
     )
     print(header)
-    print(dash_line)
+    print(f"  {'-'*10} {'-'*12} {'-'*4} "
+          f"{'-'*12} {'-'*12} "
+          f"{'-'*6} {'-'*12}")
 
     for r in results:
         pct = f"+{r.pct_change_total:.2f}%" if r.pct_change_total >= 0 else f"{r.pct_change_total:.2f}%"
@@ -76,11 +69,10 @@ def print_table(results: list[ConsecutiveUpResult]) -> None:
         )
         print(line)
 
-    print(f"{sep_line}\n")
+    print(f"{sep}\n")
 
 
 def save_json(results: list[ConsecutiveUpResult], output_dir: str) -> str:
-    """保存为 JSON 文件"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = Path(output_dir) / f"continuous_up_{timestamp}.json"
@@ -105,12 +97,11 @@ def save_json(results: list[ConsecutiveUpResult], output_dir: str) -> str:
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    print(f"JSON 结果已保存至: {filepath}")
+    print(f"JSON saved to: {filepath}")
     return str(filepath)
 
 
 def save_csv(results: list[ConsecutiveUpResult], output_dir: str) -> str:
-    """保存为 CSV 文件"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = Path(output_dir) / f"continuous_up_{timestamp}.csv"
@@ -118,9 +109,9 @@ def save_csv(results: list[ConsecutiveUpResult], output_dir: str) -> str:
     with open(filepath, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "代码", "名称", "市场",
-            "连续起始日", "连续结束日", "连续天数",
-            "区间涨幅(%)", "最新收盘价", "最新日期",
+            "Code", "Name", "Market",
+            "Streak Start", "Streak End", "Streak Days",
+            "Pct Change(%)", "Latest Close", "Latest Date",
         ])
         for r in results:
             writer.writerow([
@@ -129,62 +120,60 @@ def save_csv(results: list[ConsecutiveUpResult], output_dir: str) -> str:
                 r.pct_change_total, r.latest_close, r.latest_date,
             ])
 
-    print(f"CSV 结果已保存至: {filepath}")
+    print(f"CSV saved to: {filepath}")
     return str(filepath)
 
 
 def save_results(results: list[ConsecutiveUpResult], output_dir: str) -> None:
-    """同时保存 JSON 和 CSV"""
     save_json(results, output_dir)
     save_csv(results, output_dir)
 
 
 # ------------------------------------------------------------------
-# 参数解析
+# CLI
 # ------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="连续上涨股票扫描器 — 筛选近期连续上涨的股票",
+        description="Scan A-share stocks for consecutive up days",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
-  python main.py                     # 默认连续5天上涨
-  python main.py --days 7            # 连续7天上涨
-  python main.py --days 5 --market sh   # 仅沪市
-  python main.py --days 10 --verbose # 调试模式
+Examples:
+  python main.py                     # default 5 consecutive up days
+  python main.py --days 7            # 7 consecutive up days
+  python main.py --market sh         # Shanghai only
+  python main.py --verbose           # debug mode
         """,
     )
     parser.add_argument("--days", type=int, default=None,
-                        help="连续上涨天数要求（默认从 .env 读取，默认 5）")
+                        help="Consecutive up days requirement (default: 5)")
     parser.add_argument("--market", type=str, default=None,
                         choices=["all", "sh", "sz"],
-                        help="扫描市场范围：all/sh/sz（默认 all）")
+                        help="Market scope: all/sh/sz (default: all)")
     parser.add_argument("--no-exclude-st", action="store_true",
-                        help="不排除 ST 股票")
+                        help="Do not exclude ST stocks")
     parser.add_argument("--no-exclude-kc-cy", action="store_true",
-                        help="不排除科创板/创业板（默认排除）")
+                        help="Do not exclude STAR/ChiNext stocks")
     parser.add_argument("--output-dir", type=str, default=None,
-                        help="输出目录（默认 ./output）")
+                        help="Output directory (default: ./output)")
     parser.add_argument("--verbose", "-v", action="store_true",
-                        help="开启调试日志")
+                        help="Enable debug logging")
     parser.add_argument("--stock-list", type=str, default=None,
-                        help="指定股票列表文件（每行一个代码，覆盖全市场扫描）")
+                        help="Path to stock list file (one code per line)")
     return parser.parse_args()
 
 
 # ------------------------------------------------------------------
-# 主程序
+# Main
 # ------------------------------------------------------------------
 
 def main() -> int:
     args = parse_args()
     setup_logging(args.verbose)
-    logger.info("连续上涨股票扫描器启动")
+    logger.info("Scanner started")
 
     cfg = get_config()
 
-    # 命令行参数覆盖环境变量
     config_dict = {
         "continuous_days":  args.days   if args.days   is not None else cfg.continuous_days,
         "output_dir":       args.output_dir if args.output_dir else cfg.output_dir,
@@ -198,14 +187,13 @@ def main() -> int:
     }
     cfg = ScanConfig(**config_dict)
 
-    logger.info("配置: 连续天数=%d, 市场=%s, 排除ST=%s, 排除科创/创业=%s",
+    logger.info("Config: days=%d, market=%s, exclude_st=%s, exclude_kc_cy=%s",
                 cfg.continuous_days, cfg.market, cfg.exclude_st, cfg.exclude_kc_cy)
 
     fetcher = AkShareFetcher()
 
-    # 加载股票列表
     if cfg.stock_list_file:
-        logger.info("从文件读取股票列表: %s", cfg.stock_list_file)
+        logger.info("Reading stock list from: %s", cfg.stock_list_file)
         with open(cfg.stock_list_file, encoding="utf-8") as f:
             codes = [line.strip() for line in f if line.strip() and not line.startswith("#")]
         stocks = [
@@ -213,27 +201,25 @@ def main() -> int:
             for c in codes
         ]
     else:
-        logger.info("正在获取 A 股市场列表...")
+        logger.info("Fetching A-share stock list...")
         stocks = fetcher.get_stock_list(market=cfg.market)
-        logger.info("共获取 %d 只股票", len(stocks))
+        logger.info("Total stocks: %d", len(stocks))
         if not stocks:
-            logger.error("获取股票列表失败，请检查网络连接")
+            logger.error("Failed to fetch stock list. Check network connectivity.")
             return 1
 
-    # 执行扫描
     start_time = time.time()
     results = scan_stock_list(stocks, config=cfg)
     elapsed = time.time() - start_time
 
-    # 输出结果
     print_table(results)
 
     if results:
         save_results(results, cfg.output_dir)
-        print(f"\n[OK] 扫描完成！耗时 {elapsed:.1f} 秒，共找到 {len(results)} 只符合条件的股票")
+        print(f"\n[OK] Done in {elapsed:.1f}s, found {len(results)} stocks")
     else:
-        print(f"\n[!] 扫描完成！耗时 {elapsed:.1f} 秒，未找到符合条件的股票")
-        print("    提示：可以尝试减少连续上涨天数要求，例如 --days 3")
+        print(f"\n[!] Done in {elapsed:.1f}s, no stocks matched")
+        print("    Tip: try fewer consecutive days, e.g. --days 3")
 
     return 0
 
