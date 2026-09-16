@@ -118,7 +118,7 @@ jobs:
           echo ""
           latest_json=$(ls -t output/continuous_up_*.json 2>/dev/null | head -1)
           if [ -n "$latest_json" ]; then
-            count=$(python3 -c "import json; print(len(json.load(open('$latest_json'))))" 2>/dev/null || echo "?")
+            count=$(python -c "import json; print(len(json.load(open('$latest_json'))))" 2>/dev/null || echo "?")
             echo "✅ 共找到 $count 只符合条件的股票"
             echo ""
             echo "📄 结果文件:"
@@ -149,11 +149,11 @@ jobs:
             exit 0
           fi
 
-          count=$(python3 -c "import json; print(len(json.load(open('$latest_json'))))" 2>/dev/null || echo "0")
+          count=$(python -c "import json; print(len(json.load(open('$latest_json'))))" 2>/dev/null || echo "0")
           today=$(date +%Y-%m-%d)
 
           # 生成消息摘要（调用独立脚本，避免 YAML 内嵌 Python 的引号冲突）
-          summary=$(python3 scripts/summary.py "$latest_json" "$CONTINUOUS_UP_DAYS" "$SCAN_MARKET" "$count")
+          summary=$(python scripts/summary.py "$latest_json" "$CONTINUOUS_UP_DAYS" "$SCAN_MARKET" "$count")
 
           # 企业微信
           if [ -n "${WECHAT_WEBHOOK_URL}" ]; then
