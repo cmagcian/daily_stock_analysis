@@ -47,6 +47,7 @@ class ScanConfig:
     fetch_timeout: int = 15        # single stock fetch timeout (seconds)
     max_retries: int = 3           # max retry attempts
     output_dir: str = "./output"   # output directory
+    stock_list_file: str = ""      # path to custom stock list file
 
 
 class BaseFetcher(ABC):
