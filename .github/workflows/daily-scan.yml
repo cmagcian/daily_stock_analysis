@@ -81,17 +81,14 @@ jobs:
           REQUEST_DELAY:      ${{ github.event.inputs.delay || vars.REQUEST_DELAY || '0.3' }}
           OUTPUT_DIR:         ./output
         run: |
-          # 构建命令行参数
           DAYS="$CONTINUOUS_UP_DAYS"
           MARKET="$SCAN_MARKET"
           ARGS="--days $DAYS --market $MARKET"
 
-          # EXCLUDE_ST=false → 传 --no-exclude-st；默认 true 不传
           if [ "$EXCLUDE_ST" = "false" ]; then
             ARGS="$ARGS --no-exclude-st"
           fi
 
-          # EXCLUDE_KC_CY=true → 传 --no-exclude-kc-cy
           if [ "$EXCLUDE_KC_CY" = "true" ]; then
             ARGS="$ARGS --no-exclude-kc-cy"
           fi
@@ -135,7 +132,6 @@ jobs:
       - name: 发送通知（可选）
         if: success() && !cancelled()
         run: |
-          # 检查是否配置了任意通知渠道
           has_webhook=false
           [ -n "${WECHAT_WEBHOOK_URL}" ] && has_webhook=true
           [ -n "${TELEGRAM_BOT_TOKEN}" ] && has_webhook=true
@@ -155,46 +151,33 @@ jobs:
 
           count=$(python3 -c "import json; print(len(json.load(open('$latest_json'))))" 2>/dev/null || echo "0")
           today=$(date +%Y-%m-%d)
-          summary=$(python3 -c "
-import json
-with open('$latest_json') as f:
-    data = json.load(f)
-for r in data[:5]:
-    print(r['code'], r.get('name',''), r['streak_days'], '+', r['pct_change'], '%')
-" 2>/dev/null || echo "")
+
+          # 生成消息摘要（调用独立脚本，避免 YAML 内嵌 Python 的引号冲突）
+          summary=$(python3 scripts/summary.py "$latest_json" "$CONTINUOUS_UP_DAYS" "$SCAN_MARKET" "$count")
 
           # 企业微信
           if [ -n "${WECHAT_WEBHOOK_URL}" ]; then
-            msg="[连续上涨扫描 ${today}] 连续${CONTINUOUS_UP_DAYS}天，找到${count}只\n\n${summary}"
             curl -s -X POST "${WECHAT_WEBHOOK_URL}" \
               -H "Content-Type: application/json" \
-              -d "{\"msgtype\":{\"text\":{\"content\":\"${msg}\"}}}" \
+              -d "{\"msgtype\":{\"text\":{\"content\":\"${summary}\"}}}" \
               && echo "✅ 企业微信通知已发送" || echo "⚠️ 企业微信通知发送失败"
           fi
 
           # Telegram
           if [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_CHAT_ID}" ]; then
-            msg="[连续上涨扫描 ${today}]\n连续${CONTINUOUS_UP_DAYS}天，找到${count}只\n\n${summary}"
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
               -d "chat_id=${TELEGRAM_CHAT_ID}" \
-              -d "text=${msg}" \
+              -d "text=${summary}" \
               && echo "✅ Telegram 通知已发送" || echo "⚠️ Telegram 通知发送失败"
           fi
 
           # Discord
           if [ -n "${DISCORD_WEBHOOK_URL}" ]; then
-            msg="**[连续上涨扫描 ${today}]** 连续 ${CONTINUOUS_UP_DAYS} 天，找到 ${count} 只\n\n\`\`\`\n${summary}\n\`\`\`"
             curl -s -X POST "${DISCORD_WEBHOOK_URL}" \
               -H "Content-Type: application/json" \
-              -d "{\"content\":\"${msg}\"}" \
+              -d "{\"content\":\"${summary}\"}" \
               && echo "✅ Discord 通知已发送" || echo "⚠️ Discord 通知发送失败"
           fi
 
-          # PushPlus
-          if [ -n "${PUSHPLUS_TOKEN}" ]; then
-            msg="[连续上涨扫描 ${today}]\n连续${CONTINUOUS_UP_DAYS}天，找到${count}只\n\n${summary}"
-            curl -s -X POST "https://www.pushplus.plus/send" \
-              -H "Content-Type: application/json" \
-              -d "{\"token\":\"${PUSHPLUS_TOKEN}\",\"title\":\"连续上涨扫描 ${today}\",\"content\":\"${msg}\"}" \
-              && echo "✅ PushPlus 通知已发送" || echo "⚠️ PushPlus 通知发送失败"
-          fi
+          # PushPlu
+      
