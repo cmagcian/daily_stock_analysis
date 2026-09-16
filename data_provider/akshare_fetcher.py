@@ -117,51 +117,64 @@ class AkShareFetcher(BaseFetcher):
         return quotes
 
     def get_stock_list(self, market: Optional[str] = None) -> List[dict]:
-        """Get A-share stock list from Eastmoney."""
+        """Get A-share stock list using akshare stock_zh_a_spot_em()."""
+        try:
+            import akshare as ak
+        except ImportError:
+            logger.error("akshare not installed. Run: pip install akshare")
+            return []
+
+        try:
+            df = ak.stock_zh_a_spot_em()
+        except Exception as e:
+            logger.error("Failed to fetch stock list via akshare: %s", e)
+            return []
+
+        if df is None or df.empty:
+            logger.warning("akshare returned empty stock list")
+            return []
+
+        # akshare column names may vary by version; use positional fallbacks
+        code_col = None
+        name_col = None
+        for col in df.columns:
+            val = str(col)
+            if any(kw in val for kw in ["code", "ticker", "symbol", "secu_code"]):
+                if code_col is None:
+                    code_col = col
+            if any(kw in val for kw in ["name", "secu_name"]):
+                if name_col is None:
+                    name_col = col
+        if code_col is None:
+            code_col = df.columns[0]
+        if name_col is None:
+            name_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
+
         stocks: List[dict] = []
         filter_markets = ["sh", "sz"] if market in (None, "all", "") else [market]
 
-        for mkt in filter_markets:
-            # Eastmoney fs parameter format:
-            #   m:0+t:6  = Shanghai A-share
-            #   m:0+t:80 = Shenzhen A-share
-            #   m:1+t:2  = ChiNext (创业板)
-            #   m:1+t:23 = STAR Market (科创板)
-            fs_map = {
-                "sh": "m:0+t:6+m:1+t:23",   # Shanghai A-share + STAR Market
-                "sz": "m:0+t:80+m:1+t:2",   # Shenzhen A-share + ChiNext
-            }
-            fs_value = fs_map.get(mkt, "m:0+t:6+m:0+t:80+m:1+t:2+m:1+t:23")
+        for _, row in df.iterrows():
+            code = str(row.get(code_col, "")).strip()
+            name = str(row.get(name_col, "")).strip()
+            if not code or not name:
+                continue
+            if len(code) != 6 or not code.isdigit():
+                continue
 
-            params = {
-                "pn":     "1",
-                "pz":     "6000",
-                "po":     "1",
-                "np":     "1",
-                "fltt":   "2",
-                "invt":   "2",
-                "fid":    "f3",
-                "fs":     fs_value,
-                "fields": "f12,f14",   # code, name
-            }
-            try:
-                resp = self._session.get(
-                    _EASTMONEY_LIST_URL,
-                    params=params,
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                items = (resp.json().get("data") or {}).get("diff", [])
-                for item in items:
-                    code = (item.get("f12") or "").strip()
-                    name = (item.get("f14") or "").strip()
-                    if code and name:
-                        stocks.append({"code": code, "name": name, "market": mkt})
-            except Exception as e:
-                logger.warning("Failed to fetch %s stock list: %s", mkt, e)
+            # Determine market from code prefix
+            if code.startswith(("6", "5")):
+                stock_market = "sh"
+            elif code.startswith(("0", "3")):
+                stock_market = "sz"
+            else:
+                continue
 
-            _random_delay()
+            if stock_market not in filter_markets:
+                continue
 
+            stocks.append({"code": code, "name": name, "market": stock_market})
+
+        logger.info("akshare returned %d stocks", len(stocks))
         return stocks
 
     @staticmethod
