@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-配置管理模块
+Configuration management.
 
-从 .env 文件加载环境变量，提供类型安全的配置访问接口。
+Reads settings from environment variables (loaded from .env file).
 """
 
 from __future__ import annotations
@@ -18,17 +18,17 @@ load_dotenv()
 
 @dataclass(frozen=True)
 class ScannerConfig:
-    """扫描器配置，全部来自环境变量，有合理的默认值。"""
+    """Scanner configuration loaded from environment variables."""
 
-    continuous_days: int = 5                # 连续上涨天数要求
-    output_dir: str = "./output"            # 输出目录
-    exclude_st: bool = True                 # 排除 ST 股票
-    exclude_kc_cy: bool = False             # 是否排除科创板/创业板
-    market: str = "all"                     # all / sh / sz
-    request_delay: float = 0.3              # 请求间隔（秒）
-    fetch_timeout: int = 15                 # 单个股票获取超时（秒）
-    max_retries: int = 3                    # 最大重试次数
-    stock_list_file: Optional[str] = None   # 指定股票列表文件路径
+    continuous_days: int = 5
+    output_dir: str = "./output"
+    exclude_st: bool = True
+    exclude_kc_cy: bool = False
+    market: str = "all"
+    request_delay: float = 0.3
+    fetch_timeout: int = 15
+    max_retries: int = 3
+    stock_list_file: Optional[str] = None
 
 
 def _env_bool(key: str, default: bool) -> bool:
@@ -52,12 +52,11 @@ def _env_float(key: str, default: float) -> float:
     return float(val.strip())
 
 
-# 全局配置实例（延迟初始化，避免循环导入）
 _config: Optional[ScannerConfig] = None
 
 
 def get_config() -> ScannerConfig:
-    """获取全局配置单例。"""
+    """Get global config singleton."""
     global _config
     if _config is None:
         _config = ScannerConfig(
