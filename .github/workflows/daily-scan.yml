@@ -1,0 +1,200 @@
+name: 每日连续上涨扫描
+
+on:
+  # 定时触发：每个交易日的北京时间 17:00（UTC 09:00）
+  schedule:
+    - cron: '0 9 * * 1-5'
+    - cron: '30 9 * * 1-5'   # 备用：17:30
+
+  # 手动触发
+  workflow_dispatch:
+    inputs:
+      continuous_days:
+        description: '连续上涨天数要求'
+        required: false
+        default: '5'
+      market:
+        description: '扫描市场'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - sh
+          - sz
+      exclude_st:
+        description: '排除 ST 股票'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      exclude_kc_cy:
+        description: '排除科创板/创业板'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      delay:
+        description: '请求延迟秒数（越小越快，越大越安全）'
+        required: false
+        default: '0.3'
+
+concurrency:
+  group: up-scan
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: 🔍 连续上涨扫描
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 准备输出目录
+        run: mkdir -p output
+
+      - name: 执行扫描
+        env:
+          CONTINUOUS_UP_DAYS: ${{ github.event.inputs.continuous_days || vars.CONTINUOUS_UP_DAYS || '5' }}
+          SCAN_MARKET:        ${{ github.event.inputs.market || vars.SCAN_MARKET || 'all' }}
+          EXCLUDE_ST:         ${{ github.event.inputs.exclude_st || vars.EXCLUDE_ST || 'true' }}
+          EXCLUDE_KC_CY:      ${{ github.event.inputs.exclude_kc_cy || vars.EXCLUDE_KC_CY || 'false' }}
+          REQUEST_DELAY:      ${{ github.event.inputs.delay || vars.REQUEST_DELAY || '0.3' }}
+          OUTPUT_DIR:         ./output
+        run: |
+          # 构建命令行参数
+          DAYS="$CONTINUOUS_UP_DAYS"
+          MARKET="$SCAN_MARKET"
+          ARGS="--days $DAYS --market $MARKET"
+
+          # EXCLUDE_ST=false → 传 --no-exclude-st；默认 true 不传
+          if [ "$EXCLUDE_ST" = "false" ]; then
+            ARGS="$ARGS --no-exclude-st"
+          fi
+
+          # EXCLUDE_KC_CY=true → 传 --no-exclude-kc-cy
+          if [ "$EXCLUDE_KC_CY" = "true" ]; then
+            ARGS="$ARGS --no-exclude-kc-cy"
+          fi
+
+          echo ">>> 运行: python main.py $ARGS"
+          python main.py $ARGS
+
+      - name: 上传扫描结果
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: continuous-up-scan-${{ github.run_number }}
+          path: output/
+          retention-days: 30
+
+      - name: 输出摘要
+        if: always()
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "📊 扫描摘要"
+          echo "=========================================="
+          echo "- 连续上涨天数: $CONTINUOUS_UP_DAYS"
+          echo "- 扫描市场: $SCAN_MARKET"
+          echo "- 排除ST: $EXCLUDE_ST"
+          echo "- 排除科创/创业: $EXCLUDE_KC_CY"
+          echo ""
+          latest_json=$(ls -t output/continuous_up_*.json 2>/dev/null | head -1)
+          if [ -n "$latest_json" ]; then
+            count=$(python3 -c "import json; print(len(json.load(open('$latest_json'))))" 2>/dev/null || echo "?")
+            echo "✅ 共找到 $count 只符合条件的股票"
+            echo ""
+            echo "📄 结果文件:"
+            ls -la output/
+          else
+            echo "⚠️ 未生成结果文件"
+            ls -la output/ 2>/dev/null || echo "(output 目录为空)"
+          fi
+          echo "=========================================="
+
+      - name: 发送通知（可选）
+        if: success() && !cancelled()
+        run: |
+          # 检查是否配置了任意通知渠道
+          has_webhook=false
+          [ -n "${WECHAT_WEBHOOK_URL}" ] && has_webhook=true
+          [ -n "${TELEGRAM_BOT_TOKEN}" ] && has_webhook=true
+          [ -n "${DISCORD_WEBHOOK_URL}" ] && has_webhook=true
+          [ -n "${PUSHPLUS_TOKEN}" ]     && has_webhook=true
+
+          if [ "$has_webhook" = false ]; then
+            echo "⚪ 未配置通知渠道，跳过推送"
+            exit 0
+          fi
+
+          latest_json=$(ls -t output/continuous_up_*.json 2>/dev/null | head -1)
+          if [ -z "$latest_json" ] || [ ! -f "$latest_json" ]; then
+            echo "⚪ 无结果文件，跳过推送"
+            exit 0
+          fi
+
+          count=$(python3 -c "import json; print(len(json.load(open('$latest_json'))))" 2>/dev/null || echo "0")
+          today=$(date +%Y-%m-%d)
+          summary=$(python3 -c "
+import json
+with open('$latest_json') as f:
+    data = json.load(f)
+for r in data[:5]:
+    print(r['code'], r.get('name',''), r['streak_days'], '+', r['pct_change'], '%')
+" 2>/dev/null || echo "")
+
+          # 企业微信
+          if [ -n "${WECHAT_WEBHOOK_URL}" ]; then
+            msg="[连续上涨扫描 ${today}] 连续${CONTINUOUS_UP_DAYS}天，找到${count}只\n\n${summary}"
+            curl -s -X POST "${WECHAT_WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              -d "{\"msgtype\":{\"text\":{\"content\":\"${msg}\"}}}" \
+              && echo "✅ 企业微信通知已发送" || echo "⚠️ 企业微信通知发送失败"
+          fi
+
+          # Telegram
+          if [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_CHAT_ID}" ]; then
+            msg="[连续上涨扫描 ${today}]\n连续${CONTINUOUS_UP_DAYS}天，找到${count}只\n\n${summary}"
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TELEGRAM_CHAT_ID}" \
+              -d "text=${msg}" \
+              && echo "✅ Telegram 通知已发送" || echo "⚠️ Telegram 通知发送失败"
+          fi
+
+          # Discord
+          if [ -n "${DISCORD_WEBHOOK_URL}" ]; then
+            msg="**[连续上涨扫描 ${today}]** 连续 ${CONTINUOUS_UP_DAYS} 天，找到 ${count} 只\n\n\`\`\`\n${summary}\n\`\`\`"
+            curl -s -X POST "${DISCORD_WEBHOOK_URL}" \
+              -H "Content-Type: application/json" \
+              -d "{\"content\":\"${msg}\"}" \
+              && echo "✅ Discord 通知已发送" || echo "⚠️ Discord 通知发送失败"
+          fi
+
+          # PushPlus
+          if [ -n "${PUSHPLUS_TOKEN}" ]; then
+            msg="[连续上涨扫描 ${today}]\n连续${CONTINUOUS_UP_DAYS}天，找到${count}只\n\n${summary}"
+            curl -s -X POST "https://www.pushplus.plus/send" \
+              -H "Content-Type: application/json" \
+              -d "{\"token\":\"${PUSHPLUS_TOKEN}\",\"title\":\"连续上涨扫描 ${today}\",\"content\":\"${msg}\"}" \
+              && echo "✅ PushPlus 通知已发送" || echo "⚠️ PushPlus 通知发送失败"
+          fi
