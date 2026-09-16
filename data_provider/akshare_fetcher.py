@@ -117,28 +117,103 @@ class AkShareFetcher(BaseFetcher):
         return quotes
 
     def get_stock_list(self, market: Optional[str] = None) -> List[dict]:
-        """Get A-share stock list using akshare stock_zh_a_spot_em()."""
+        """Get A-share stock list with pagination and fallback."""
+        # Strategy: try push2 API with proper pagination first, then akshare
+        stocks = self._fetch_via_push2(market)
+        if stocks:
+            return stocks
+
+        logger.warning("push2 API failed, falling back to akshare...")
+        return self._fetch_via_akshare(market)
+
+    def _fetch_via_push2(self, market: Optional[str] = None) -> List[dict]:
+        """Fetch stock list using Eastmoney push2 API with pagination."""
+        stocks: List[dict] = []
+        filter_markets = ["sh", "sz"] if market in (None, "all", "") else [market]
+
+        # fs groups: (market_key, fs_value, default_market)
+        groups = [
+            ("sh_main",  "m:0+t:6",   "sh"),    # Shanghai main board
+            ("sh_star",  "m:1+t:23",  "sh"),    # Shanghai STAR market
+            ("sz_main",  "m:0+t:80",  "sz"),    # Shenzhen main board
+            ("sz_cy",    "m:1+t:2",   "sz"),    # Shenzhen ChiNext
+        ]
+
+        for group_key, fs_value, default_mkt in groups:
+            if default_mkt not in filter_markets:
+                continue
+
+            page = 1
+            while True:
+                params = {
+                    "pn":     str(page),
+                    "pz":     "5000",
+                    "po":     "1",
+                    "np":     "1",
+                    "fltt":   "2",
+                    "invt":   "2",
+                    "fid":    "f3",
+                    "fs":     fs_value,
+                    "fields": "f12,f14",
+                }
+                try:
+                    resp = self._session.get(
+                        _EASTMONEY_LIST_URL,
+                        params=params,
+                        timeout=30,
+                    )
+                    resp.raise_for_status()
+                    json_data = resp.json()
+                    items = (json_data.get("data") or {}).get("diff", [])
+                except Exception as e:
+                    logger.warning("push2 page %d (%s) failed: %s", page, group_key, e)
+                    break
+
+                if not items:
+                    break
+
+                for item in items:
+                    code = (item.get("f12") or "").strip()
+                    name = (item.get("f14") or "").strip()
+                    if code and name and len(code) == 6 and code.isdigit():
+                        stocks.append({"code": code, "name": name, "market": default_mkt})
+
+                # Check if we got fewer than page size = no more pages
+                if len(items) < 5000:
+                    break
+                page += 1
+
+                # Safety: max 10 pages
+                if page > 10:
+                    break
+
+                _random_delay(0.1, 0.3)
+
+        logger.info("push2 API returned %d stocks", len(stocks))
+        return stocks
+
+    def _fetch_via_akshare(self, market: Optional[str] = None) -> List[dict]:
+        """Fallback: fetch via akshare stock_zh_a_spot_em()."""
         try:
             import akshare as ak
         except ImportError:
-            logger.error("akshare not installed. Run: pip install akshare")
+            logger.error("akshare not installed")
             return []
 
         try:
             df = ak.stock_zh_a_spot_em()
         except Exception as e:
-            logger.error("Failed to fetch stock list via akshare: %s", e)
+            logger.error("akshare failed: %s", e)
             return []
 
         if df is None or df.empty:
-            logger.warning("akshare returned empty stock list")
             return []
 
-        # akshare column names may vary by version; use positional fallbacks
+        # Detect code/name columns by keyword
         code_col = None
         name_col = None
         for col in df.columns:
-            val = str(col)
+            val = str(col).lower()
             if any(kw in val for kw in ["code", "ticker", "symbol", "secu_code"]):
                 if code_col is None:
                     code_col = col
@@ -160,18 +235,14 @@ class AkShareFetcher(BaseFetcher):
                 continue
             if len(code) != 6 or not code.isdigit():
                 continue
-
-            # Determine market from code prefix
             if code.startswith(("6", "5")):
                 stock_market = "sh"
             elif code.startswith(("0", "3")):
                 stock_market = "sz"
             else:
                 continue
-
             if stock_market not in filter_markets:
                 continue
-
             stocks.append({"code": code, "name": name, "market": stock_market})
 
         logger.info("akshare returned %d stocks", len(stocks))
