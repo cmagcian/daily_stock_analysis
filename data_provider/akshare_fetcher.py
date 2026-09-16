@@ -23,8 +23,8 @@ from tenacity import (
     retry_if_exception_type,
 )
 
-from .base import BaseFetcher, DataFetchError, StockQuote
-from ..src.config import get_config
+from data_provider.base import BaseFetcher, DataFetchError, StockQuote
+from src.config import get_config
 
 logger = logging.getLogger(__name__)
 
