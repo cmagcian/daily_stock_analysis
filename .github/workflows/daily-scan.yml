@@ -51,7 +51,7 @@ jobs:
   scan:
     name: Scan
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
