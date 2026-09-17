@@ -69,7 +69,19 @@ def find_consecutive_up(
     dates = [q.date for q in quotes]
     n = len(closes)
 
-    # Require: latest day must be an up day
+    # DIAG: log first 3 stocks to check date range
+    if len(diag_seen_ref) < 3:
+        with diag_lock:
+            if len(diag_seen_ref) < 3:
+                diag_seen_ref.append({
+                    "code": code,
+                    "dates": dates[:3] + ["..."] + dates[-3:],
+                    "closes": [round(c, 2) for c in closes[:3]] + [round(closes[-1], 2)],
+                    "last_up": closes[-1] > closes[-2],
+                })
+                logger.info("DIAG dates: %s", diag_seen_ref[-1])
+
+    # Require: latest day must be an up day (streak ends today)
     if closes[-1] <= closes[-2]:
         return None
 
@@ -106,7 +118,7 @@ def find_consecutive_up(
 
 def _scan_one(stock: dict, cfg: ScanConfig, fetcher: AkShareFetcher,
               results: List[ConsecutiveUpResult], lock: threading.Lock,
-              stats: dict) -> None:
+              stats: dict, diag_seen_ref: list) -> None:
     """Scan a single stock and append result if matched."""
     code = stock["code"]
     name = stock["name"]
@@ -122,6 +134,14 @@ def _scan_one(stock: dict, cfg: ScanConfig, fetcher: AkShareFetcher,
     t0 = time.time()
     result = find_consecutive_up(code, name, market, config=cfg)
     elapsed = time.time() - t0
+
+    # Diagnostic: show first 10 stocks that have data
+    if result is not None and len(diag_seen_ref) < 10:
+        with diag_lock:
+            if len(diag_seen_ref) < 10:
+                diag_seen_ref.append((code, name, elapsed))
+                if len(diag_seen_ref) == 10:
+                    logger.info("DIAG: first matching stocks: %s", diag_seen_ref)
 
     if elapsed > 3.0:
         logger.debug("SLOW: %s took %.1fs", code, elapsed)
@@ -151,7 +171,11 @@ def scan_stock_list(
     total = len(stocks)
 
     # Shared stats dict for cross-thread counting
-    stats = {"no_match": 0, "skipped_st": 0, "skipped_kc_cy": 0}
+    stats = {"no_match": 0, "skipped_st": 0, "skipped_kc_cy": 0, "no_data": 0}
+
+    # Diagnostic: track the first 5 stocks that have data to verify
+    diag_seen: list = []
+    diag_lock = threading.Lock()
 
     # Use 20 concurrent workers for speed
     max_workers = min(20, total)
@@ -161,7 +185,7 @@ def scan_stock_list(
     t_start = time.time()
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_scan_one, stock, cfg, fetcher, results, lock, stats): stock
+        futures = {executor.submit(_scan_one, stock, cfg, fetcher, results, lock, stats, diag_seen): stock
                    for stock in stocks}
         for i, future in enumerate(as_completed(futures), 1):
             if i % 500 == 0 or i == total:
