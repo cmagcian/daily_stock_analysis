@@ -25,8 +25,8 @@ class ScannerConfig:
     exclude_st: bool = True
     exclude_kc_cy: bool = False
     market: str = "all"
-    request_delay: float = 0.3
-    fetch_timeout: int = 15
+    request_delay: float = 0.1
+    fetch_timeout: int = 8
     max_retries: int = 3
     stock_list_file: Optional[str] = None
 
@@ -65,8 +65,8 @@ def get_config() -> ScannerConfig:
             exclude_st      = _env_bool("EXCLUDE_ST", True),
             exclude_kc_cy   = _env_bool("EXCLUDE_KC_CY", False),
             market          = (os.getenv("SCAN_MARKET") or "all").strip().lower(),
-            request_delay   = _env_float("REQUEST_DELAY", 0.3),
-            fetch_timeout   = _env_int("FETCH_TIMEOUT", 15),
+            request_delay   = _env_float("REQUEST_DELAY", 0.1),
+            fetch_timeout   = _env_int("FETCH_TIMEOUT", 8),
             max_retries     = _env_int("MAX_RETRIES", 3),
             stock_list_file = os.getenv("STOCK_LIST_FILE"),
         )
