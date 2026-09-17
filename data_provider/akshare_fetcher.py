@@ -68,52 +68,80 @@ class AkShareFetcher(BaseFetcher):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> List[StockQuote]:
-        """Get daily K-line data for a single stock."""
-        secid = self._to_secid(code)
-
+        """Get daily K-line data via akshare stock_zh_a_hist (qfq adjusted)."""
         if end_date is None:
             end_date = datetime.now().strftime("%Y%m%d")
         if start_date is None:
             start_date = (datetime.now() - timedelta(days=180)).strftime("%Y%m%d")
 
-        params = {
-            "secid":   secid,
-            "fields1": "f1,f2,f3,f4,f5,f6",
-            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-            "klt":     "101",       # daily
-            "fqt":     "1",         # adjusted close
-            "beg":     start_date,
-            "end":     end_date,
-            "lmt":     str(days),
-        }
+        try:
+            import akshare as ak
+        except ImportError:
+            raise DataFetchError("akshare not installed")
 
-        resp = self._session.get(
-            _EASTMONEY_KLINE_URL,
-            params=params,
-            timeout=get_config().fetch_timeout,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
+        try:
+            df = ak.stock_zh_a_hist(
+                symbol=code,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq",
+            )
+        except Exception as e:
+            raise DataFetchError(f"ak.stock_zh_a_hist failed: {e}") from e
 
-        klines = (payload.get("data") or {}).get("klines") or []
-        if not klines:
+        if df is None or df.empty:
             return []
 
+        # Detect column names flexibly
+        col_map: dict = {}
+        for col in df.columns:
+            v = str(col).lower()
+            if "date" in v:
+                col_map.setdefault("date", col)
+            elif v == "open":
+                col_map.setdefault("open", col)
+            elif v == "high":
+                col_map.setdefault("high", col)
+            elif v == "low":
+                col_map.setdefault("low", col)
+            elif v == "close":
+                col_map.setdefault("close", col)
+            elif v in ("volume", "vol"):
+                col_map.setdefault("volume", col)
+            elif v in ("amount",):
+                col_map.setdefault("amount", col)
+
+        # Fallback to positional columns
+        date_col  = col_map.get("date",  df.columns[0])
+        open_col  = col_map.get("open",  df.columns[1] if len(df.columns) > 1 else date_col)
+        high_col  = col_map.get("high",  df.columns[2] if len(df.columns) > 2 else open_col)
+        low_col   = col_map.get("low",   df.columns[3] if len(df.columns) > 3 else high_col)
+        close_col = col_map.get("close", df.columns[4] if len(df.columns) > 4 else low_col)
+        volume_col = col_map.get("volume", df.columns[5] if len(df.columns) > 5 else close_col)
+        amount_col = col_map.get("amount", None)
+
+        df = df.sort_values(date_col).reset_index(drop=True)
+
         quotes: List[StockQuote] = []
-        for kline in klines:
-            parts = kline.split(",")
-            if len(parts) < 6:
+        for _, row in df.iterrows():
+            try:
+                quotes.append(StockQuote(
+                    date   = str(row[date_col]).strip(),
+                    code   = code,
+                    open   = float(row[open_col]),
+                    high   = float(row[high_col]),
+                    low    = float(row[low_col]),
+                    close  = float(row[close_col]),
+                    volume = float(row[volume_col]) if volume_col else 0.0,
+                    amount = float(row[amount_col]) if amount_col and amount_col in row.index else 0.0,
+                ))
+            except (ValueError, TypeError, KeyError):
                 continue
-            quotes.append(StockQuote(
-                date  = parts[0],
-                code  = code,
-                open  = float(parts[1]),
-                high  = float(parts[2]),
-                low   = float(parts[3]),
-                close = float(parts[4]),
-                volume=float(parts[5]),
-                amount=float(parts[6]) if len(parts) > 6 else 0.0,
-            ))
+
+        # Return last `days` records
+        if len(quotes) > days:
+            quotes = quotes[-days:]
         return quotes
 
     def get_stock_list(self, market: Optional[str] = None) -> List[dict]:
