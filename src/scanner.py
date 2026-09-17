@@ -68,32 +68,25 @@ def find_consecutive_up(
     dates = [q.date for q in quotes]
     n = len(closes)
 
-    max_streak = 0
-    max_streak_end = n - 1
-
-    cur = 1
-    cur_end = n - 1
-
-    for i in range(n - 1, 0, -1):
-        if closes[i] > closes[i - 1]:
-            cur += 1
-        else:
-            if cur > max_streak:
-                max_streak = cur
-                max_streak_end = cur_end
-            cur = 1
-            cur_end = i - 1
-
-    if cur > max_streak:
-        max_streak = cur
-        max_streak_end = cur_end
-
-    if max_streak < cfg.continuous_days:
+    # Require: the streak must end on the latest day
+    # (i.e., latest close > previous close, so today is an up day)
+    if n < cfg.continuous_days + 1 or closes[-1] <= closes[-2]:
         return None
 
-    start_idx = max_streak_end - max_streak + 1
-    streak_dates = dates[start_idx: max_streak_end + 1]
-    streak_prices = closes[start_idx: max_streak_end + 1]
+    # Count backwards from the last day
+    streak = 1
+    for i in range(n - 1, 0, -1):
+        if closes[i] > closes[i - 1]:
+            streak += 1
+        else:
+            break
+
+    if streak < cfg.continuous_days:
+        return None
+
+    start_idx = n - streak
+    streak_dates = dates[start_idx:n]
+    streak_prices = closes[start_idx:n]
     total_change = (streak_prices[-1] / streak_prices[0] - 1) * 100 if streak_prices[0] > 0 else 0.0
 
     return ConsecutiveUpResult(
