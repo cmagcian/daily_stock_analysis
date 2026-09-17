@@ -54,7 +54,7 @@ def find_consecutive_up(
     cfg = config or get_config()
     fetcher = AkShareFetcher()
 
-    lookback = cfg.continuous_days + 10
+    lookback = cfg.continuous_days + 5  # 5 extra days buffer
     try:
         quotes = fetcher.get_daily_klines(code, days=lookback)
     except Exception as e:
@@ -138,8 +138,8 @@ def scan_stock_list(
     lock = threading.Lock()
     total = len(stocks)
 
-    # Use 10 concurrent workers for speed
-    max_workers = min(10, total)
+    # Use 20 concurrent workers for speed
+    max_workers = min(20, total)
     logger.info("Scanning %d stocks concurrently (workers=%d), consecutive up >= %d days",
                 total, max_workers, cfg.continuous_days)
 
@@ -147,7 +147,7 @@ def scan_stock_list(
         futures = {executor.submit(_scan_one, stock, cfg, fetcher, results, lock): stock
                    for stock in stocks}
         for i, future in enumerate(as_completed(futures), 1):
-            if i % 100 == 0 or i == total:
+            if i % 200 == 0 or i == total:
                 logger.info("Progress: %d/%d, found %d so far", i, total, len(results))
 
     # Sort by pct_change descending
