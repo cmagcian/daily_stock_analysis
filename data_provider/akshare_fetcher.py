@@ -191,7 +191,7 @@ class AkShareFetcher(BaseFetcher):
                     resp = self._session.get(
                         _EASTMONEY_LIST_URL,
                         params=params,
-                        timeout=30,
+                        timeout=10,
                     )
                     resp.raise_for_status()
                     json_data = resp.json()
