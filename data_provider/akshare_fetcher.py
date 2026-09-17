@@ -145,15 +145,17 @@ class AkShareFetcher(BaseFetcher):
         return quotes
 
     def get_stock_list(self, market: Optional[str] = None) -> List[dict]:
-        """Get A-share stock list. Tries akshare first (more reliable), then push2."""
-        # Primary: akshare (stable in GitHub Actions)
-        stocks = self._fetch_via_akshare(market)
-        if stocks:
-            logger.info("akshare returned %d stocks", len(stocks))
-            return stocks
-
-        logger.warning("akshare failed, trying push2 fallback...")
-        return self._fetch_via_push2(market)
+        """Generate A-share codes from known ranges. No network needed."""
+        from data.code_ranges import generate_all_codes
+        filter_markets = ["sh", "sz"] if market in (None, "all", "") else [market]
+        all_codes = generate_all_codes()
+        stocks: List[dict] = []
+        for code, mkt in all_codes:
+            if mkt not in filter_markets:
+                continue
+            stocks.append({"code": code, "name": code, "market": mkt})
+        logger.info("generated %d candidate codes from ranges", len(stocks))
+        return stocks
 
     def _fetch_via_push2(self, market: Optional[str] = None) -> List[dict]:
         """Fetch stock list using Eastmoney push2 API with pagination."""
