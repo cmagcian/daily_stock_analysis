@@ -7,17 +7,14 @@ are 6-digit strings defining the inclusive range of codes to scan.
 """
 
 CODE_RANGES = [
-    # Shanghai main board: 600000-605999
-    ("600000", "605999", "sh"),
-    # Shanghai STAR Market: 688000-688999
-    ("688000", "688999", "sh"),
-    # Shenzhen main board: 000000-003999
-    ("000000", "003999", "sz"),
-    # Shenzhen ChiNext: 300000-300999
-    ("300000", "300999", "sz"),
-    # Beijing Stock Exchange
-    ("830000", "879999", "bj"),
-    ("920000", "929999", "bj"),
+    # Shanghai main board: 600001-603999 (most active SH codes)
+    ("600001", "603999", "sh"),
+    # Shanghai STAR Market: 688001-688299
+    ("688001", "688299", "sh"),
+    # Shenzhen main board: 000001-002999
+    ("000001", "002999", "sz"),
+    # Shenzhen ChiNext: 300001-300399
+    ("300001", "300399", "sz"),
 ]
 
 
