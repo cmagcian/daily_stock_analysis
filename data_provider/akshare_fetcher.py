@@ -145,14 +145,15 @@ class AkShareFetcher(BaseFetcher):
         return quotes
 
     def get_stock_list(self, market: Optional[str] = None) -> List[dict]:
-        """Get A-share stock list with pagination and fallback."""
-        # Strategy: try push2 API with proper pagination first, then akshare
-        stocks = self._fetch_via_push2(market)
+        """Get A-share stock list. Tries akshare first (more reliable), then push2."""
+        # Primary: akshare (stable in GitHub Actions)
+        stocks = self._fetch_via_akshare(market)
         if stocks:
+            logger.info("akshare returned %d stocks", len(stocks))
             return stocks
 
-        logger.warning("push2 API failed, falling back to akshare...")
-        return self._fetch_via_akshare(market)
+        logger.warning("akshare failed, trying push2 fallback...")
+        return self._fetch_via_push2(market)
 
     def _fetch_via_push2(self, market: Optional[str] = None) -> List[dict]:
         """Fetch stock list using Eastmoney push2 API with pagination."""
@@ -221,23 +222,36 @@ class AkShareFetcher(BaseFetcher):
         return stocks
 
     def _fetch_via_akshare(self, market: Optional[str] = None) -> List[dict]:
-        """Fallback: fetch via akshare stock_zh_a_spot_em()."""
-        try:
-            import akshare as ak
-        except ImportError:
-            logger.error("akshare not installed")
+        """Primary: fetch via akshare stock_zh_a_spot_em()."""
+        for attempt in range(3):
+            try:
+                import akshare as ak
+            except ImportError:
+                logger.error("akshare not installed")
+                return []
+
+            try:
+                df = ak.stock_zh_a_spot_em()
+            except Exception as e:
+                logger.warning("akshare attempt %d failed: %s", attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                logger.error("akshare exhausted retries: %s", e)
+                return []
+
+            if df is None or df.empty:
+                logger.warning("akshare returned empty, retrying...")
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                return []
+
+            break  # success
+        else:
             return []
 
-        try:
-            df = ak.stock_zh_a_spot_em()
-        except Exception as e:
-            logger.error("akshare failed: %s", e)
-            return []
-
-        if df is None or df.empty:
-            return []
-
-        # Detect code/name columns by keyword
+        # Detect code/name columns flexibly
         code_col = None
         name_col = None
         for col in df.columns:
