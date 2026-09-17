@@ -69,18 +69,6 @@ def find_consecutive_up(
     dates = [q.date for q in quotes]
     n = len(closes)
 
-    # DIAG: log first 3 stocks to check date range
-    if len(diag_seen_ref) < 3:
-        with diag_lock:
-            if len(diag_seen_ref) < 3:
-                diag_seen_ref.append({
-                    "code": code,
-                    "dates": dates[:3] + ["..."] + dates[-3:],
-                    "closes": [round(c, 2) for c in closes[:3]] + [round(closes[-1], 2)],
-                    "last_up": closes[-1] > closes[-2],
-                })
-                logger.info("DIAG dates: %s", diag_seen_ref[-1])
-
     # Require: latest day must be an up day (streak ends today)
     if closes[-1] <= closes[-2]:
         return None
@@ -135,13 +123,20 @@ def _scan_one(stock: dict, cfg: ScanConfig, fetcher: AkShareFetcher,
     result = find_consecutive_up(code, name, market, config=cfg)
     elapsed = time.time() - t0
 
-    # Diagnostic: show first 10 stocks that have data
-    if result is not None and len(diag_seen_ref) < 10:
+    # DIAG: show first 5 stocks to check data
+    if len(diag_seen_ref) < 5:
         with diag_lock:
-            if len(diag_seen_ref) < 10:
-                diag_seen_ref.append((code, name, elapsed))
-                if len(diag_seen_ref) == 10:
-                    logger.info("DIAG: first matching stocks: %s", diag_seen_ref)
+            diag_seen_ref.append({"code": code, "elapsed": elapsed})
+            if len(diag_seen_ref) == 5:
+                logger.info("DIAG: first 5 stocks scanned (no filter applied yet): %s", diag_seen_ref)
+
+    # DIAG: show why each stock fails (first 10)
+    if result is None and len(diag_seen_ref) >= 5 and len(diag_seen_ref) < 15:
+        with diag_lock:
+            if len([d for d in diag_seen_ref if "fail_reason" in d]) < 10:
+                # We can't easily get the failure reason from find_consecutive_up
+                # So just log that we're checking
+                pass
 
     if elapsed > 3.0:
         logger.debug("SLOW: %s took %.1fs", code, elapsed)
