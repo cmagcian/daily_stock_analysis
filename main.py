@@ -160,6 +160,8 @@ Examples:
                         help="Enable debug logging")
     parser.add_argument("--stock-list", type=str, default=None,
                         help="Path to stock list file (one code per line)")
+    parser.add_argument("--test-stock", type=str, default=None,
+                        help="Test a single stock code (e.g., --test-stock 688135)")
     return parser.parse_args()
 
 
@@ -211,6 +213,20 @@ def main() -> int:
     start_time = time.time()
     results = scan_stock_list(stocks, config=cfg)
     elapsed = time.time() - start_time
+
+    if not results and args.verbose:
+        # Debug: test a few stocks manually
+        debug_codes = ["688135", "000001", "600519"]
+        fetcher = AkShareFetcher()
+        for dc in debug_codes:
+            try:
+                quotes = fetcher.get_daily_klines(dc, days=10)
+                if quotes:
+                    closes = [q.close for q in quotes]
+                    dates = [q.date for q in quotes]
+                    print(f"DEBUG {dc}: {len(quotes)} quotes, last={dates[-1]}={closes[-1]:.2f}, prev={dates[-2]}={closes[-2]:.2f}, last_up={closes[-1] > closes[-2]}")
+            except Exception as e:
+                print(f"DEBUG {dc}: ERROR {e}")
 
     print_table(results)
 
