@@ -45,6 +45,7 @@ def find_consecutive_up(
     market: str,
     *,
     config: Optional[ScanConfig] = None,
+    diag: Optional[dict] = None,
 ) -> Optional[ConsecutiveUpResult]:
     """
     Check if a stock has a consecutive up sequence >= continuous_days.
@@ -60,9 +61,13 @@ def find_consecutive_up(
         quotes = fetcher.get_daily_klines(code, days=lookback)
     except Exception as e:
         logger.debug("Failed to fetch %s: %s", code, e)
+        if diag:
+            diag["error"] = str(e)
         return None
 
     if not quotes or len(quotes) < cfg.continuous_days + 1:
+        if diag:
+            diag["reason"] = f"no_data_or_short ({len(quotes) if quotes else 0} quotes)"
         return None
 
     closes = [q.close for q in quotes]
@@ -71,6 +76,8 @@ def find_consecutive_up(
 
     # Require: latest day must be an up day (streak ends today)
     if closes[-1] <= closes[-2]:
+        if diag:
+            diag["reason"] = f"last_day_down ({dates[-2]}={closes[-2]:.2f} -> {dates[-1]}={closes[-1]:.2f})"
         return None
 
     # Count backwards from the last day
@@ -82,6 +89,8 @@ def find_consecutive_up(
             break
 
     if streak < cfg.continuous_days:
+        if diag:
+            diag["reason"] = f"streak_too_short ({streak} < {cfg.continuous_days})"
         return None
 
     start_idx = n - streak
@@ -120,15 +129,16 @@ def _scan_one(stock: dict, cfg: ScanConfig, fetcher: AkShareFetcher,
         return
 
     t0 = time.time()
-    result = find_consecutive_up(code, name, market, config=cfg)
+    diag_info: dict = {}
+    result = find_consecutive_up(code, name, market, config=cfg, diag=diag_info)
     elapsed = time.time() - t0
 
-    # DIAG: show first 5 stocks to check data
-    if len(diag_seen_ref) < 5:
+    # DIAG: show first 10 stocks with their failure reason
+    if len(diag_seen_ref) < 10:
         with diag_lock:
-            diag_seen_ref.append({"code": code, "elapsed": elapsed})
-            if len(diag_seen_ref) == 5:
-                logger.info("DIAG: first 5 stocks scanned (no filter applied yet): %s", diag_seen_ref)
+            diag_seen_ref.append({"code": code, "elapsed": elapsed, **diag_info})
+            if len(diag_seen_ref) == 10:
+                logger.info("DIAG first 10 (all failed): %s", diag_seen_ref)
 
     # DIAG: show why each stock fails (first 10)
     if result is None and len(diag_seen_ref) >= 5 and len(diag_seen_ref) < 15:
