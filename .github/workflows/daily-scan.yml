@@ -87,7 +87,7 @@ jobs:
           if [ "$EXCLUDE_ST" = "false" ]; then
             ARGS="$ARGS --no-exclude-st"
           fi
-          if [ "$EXCLUDE_KC_CY" = "true" ]; then
+          if [ "$EXCLUDE_KC_CY" = "false" ]; then
             ARGS="$ARGS --no-exclude-kc-cy"
           fi
           echo ">>> Running: python main.py $ARGS"
