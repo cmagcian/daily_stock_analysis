@@ -38,6 +38,18 @@ on:
         options:
           - 'true'
           - 'false'
+      verbose:
+        description: 'Enable debug logging (shows data diagnostics)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      test_stock:
+        description: 'Test a single stock code (e.g., 688135)'
+        required: false
+        default: ''
       delay:
         description: 'Request delay in seconds (smaller=faster, larger=safer)'
         required: false
@@ -80,6 +92,8 @@ jobs:
           EXCLUDE_KC_CY:      ${{ github.event.inputs.exclude_kc_cy || vars.EXCLUDE_KC_CY || 'false' }}
           REQUEST_DELAY:      ${{ github.event.inputs.delay || vars.REQUEST_DELAY || '0.3' }}
           OUTPUT_DIR:         ./output
+          VERBOSE:            ${{ github.event.inputs.verbose || 'false' }}
+          TEST_STOCK:         ${{ github.event.inputs.test_stock || '' }}
         run: |
           DAYS="$CONTINUOUS_UP_DAYS"
           MARKET="$SCAN_MARKET"
@@ -89,6 +103,12 @@ jobs:
           fi
           if [ "$EXCLUDE_KC_CY" = "false" ]; then
             ARGS="$ARGS --no-exclude-kc-cy"
+          fi
+          if [ "$VERBOSE" = "true" ]; then
+            ARGS="$ARGS --verbose"
+          fi
+          if [ -n "$TEST_STOCK" ]; then
+            ARGS="$ARGS --test-stock $TEST_STOCK"
           fi
           echo ">>> Running: python main.py $ARGS"
           python main.py $ARGS
