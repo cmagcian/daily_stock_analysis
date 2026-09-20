@@ -57,8 +57,8 @@ class AkShareFetcher(BaseFetcher):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((DataFetchError, requests.RequestException)),
+        wait=wait_exponential(multiplier=1, min=2, max=15),
+        retry=retry_if_exception_type((DataFetchError, requests.RequestException, Exception)),
         reraise=True,
     )
     def get_daily_klines(
