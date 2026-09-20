@@ -133,6 +133,9 @@ def _scan_one(stock: dict, cfg: ScanConfig, fetcher: AkShareFetcher,
     result = find_consecutive_up(code, name, market, config=cfg, diag=diag_info)
     elapsed = time.time() - t0
 
+    # Small delay to avoid overwhelming akshare
+    time.sleep(0.2)
+
     # DIAG: show first 10 stocks with their failure reason
     if len(diag_seen_ref) < 10:
         with diag_lock:
@@ -182,8 +185,8 @@ def scan_stock_list(
     diag_seen: list = []
     diag_lock = threading.Lock()
 
-    # Use 20 concurrent workers for speed
-    max_workers = min(20, total)
+    # Use 8 concurrent workers to avoid overwhelming akshare
+    max_workers = min(8, total)
     logger.info("Scanning %d stocks (workers=%d), consecutive up >= %d days",
                 total, max_workers, cfg.continuous_days)
 
