@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from data_provider.akshare_fetcher import AkShareFetcher
+from data_provider.multi_source_fetcher import MultiSourceFetcher
 from data_provider.base import ScanConfig
 from src.config import get_config
 
@@ -52,7 +52,7 @@ def find_consecutive_up(
     up run ending at the latest day. If length >= requirement, return the result.
     """
     cfg = config or get_config()
-    fetcher = AkShareFetcher()
+    fetcher = MultiSourceFetcher()
 
     lookback = cfg.continuous_days + 5
     try:
@@ -120,7 +120,7 @@ def scan_stock_list(
     Scan a list of stocks sequentially for reliability.
     """
     cfg = config or get_config()
-    fetcher = AkShareFetcher()
+    fetcher = MultiSourceFetcher()
     results: List[ConsecutiveUpResult] = []
     total = len(stocks)
 
