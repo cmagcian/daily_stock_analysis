@@ -4,15 +4,13 @@ Consecutive up-stock scanner.
 
 Core logic: fetch recent trading days for each stock, find the longest
 sequence where each day's close is strictly greater than the previous day.
-Uses ThreadPoolExecutor for parallel scanning.
+Uses sequential scanning for reliability (akshare is slow/unstable).
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -60,14 +58,14 @@ def find_consecutive_up(
     try:
         quotes = fetcher.get_daily_klines(code, days=lookback)
     except Exception as e:
-        logger.warning("Failed to fetch %s: %s", code, str(e)[:50])
+        logger.warning("Failed to fetch %s: %s", code, str(e)[:80])
         if diag:
-            diag["error"] = str(e)[:100]  # truncate to avoid spam
+            diag["error"] = str(e)[:100]
         return None
 
     if not quotes or len(quotes) < cfg.continuous_days + 1:
         if diag:
-            diag["reason"] = f"no_data_or_short ({len(quotes) if quotes else 0} quotes)"
+            diag["reason"] = f"no_data ({len(quotes) if quotes else 0} quotes)"
         return None
 
     closes = [q.close for q in quotes]
@@ -77,7 +75,7 @@ def find_consecutive_up(
     # Require: latest day must be an up day (streak ends today)
     if closes[-1] <= closes[-2]:
         if diag:
-            diag["reason"] = f"last_day_down ({dates[-2]}={closes[-2]:.2f} -> {dates[-1]}={closes[-1]:.2f})"
+            diag["reason"] = f"last_day_down ({dates[-2]} {closes[-2]:.2f} -> {dates[-1]} {closes[-1]:.2f})"
         return None
 
     # Count backwards from the last day
@@ -90,7 +88,7 @@ def find_consecutive_up(
 
     if streak < cfg.continuous_days:
         if diag:
-            diag["reason"] = f"streak_too_short ({streak} < {cfg.continuous_days})"
+            diag["reason"] = f"streak={streak} < {cfg.continuous_days}"
         return None
 
     start_idx = n - streak
@@ -113,99 +111,80 @@ def find_consecutive_up(
     )
 
 
-def _scan_one(stock: dict, cfg: ScanConfig, fetcher: AkShareFetcher,
-              results: List[ConsecutiveUpResult], lock: threading.Lock,
-              stats: dict, diag_seen_ref: list) -> None:
-    """Scan a single stock and append result if matched."""
-    code = stock["code"]
-    name = stock["name"]
-    market = stock.get("market", "sh")
-
-    if cfg.exclude_st and fetcher.is_st_stock(name):
-        stats["skipped_st"] += 1
-        return
-    if cfg.exclude_kc_cy and fetcher.is_kc_cy_stock(code):
-        stats["skipped_kc_cy"] += 1
-        return
-
-    t0 = time.time()
-    diag_info: dict = {}
-    result = find_consecutive_up(code, name, market, config=cfg, diag=diag_info)
-    elapsed = time.time() - t0
-
-    # Small delay to avoid overwhelming akshare
-    time.sleep(0.2)
-
-    # DIAG: show first 10 stocks with their failure reason
-    if len(diag_seen_ref) < 10:
-        with diag_lock:
-            diag_seen_ref.append({"code": code, "elapsed": elapsed, **diag_info})
-            if len(diag_seen_ref) == 10:
-                logger.info("DIAG first 10 (all failed): %s", diag_seen_ref)
-
-    # DIAG: show why each stock fails (first 10)
-    if result is None and len(diag_seen_ref) >= 5 and len(diag_seen_ref) < 15:
-        with diag_lock:
-            if len([d for d in diag_seen_ref if "fail_reason" in d]) < 10:
-                # We can't easily get the failure reason from find_consecutive_up
-                # So just log that we're checking
-                pass
-
-    if elapsed > 3.0:
-        logger.warning("SLOW: %s took %.1fs", code, elapsed)
-
-    if result:
-        with lock:
-            results.append(result)
-            logger.info("[%d] %s %s %d days, +%.2f%% (%.1fs)",
-                        len(results), code, name, result.streak_days,
-                        result.pct_change_total, elapsed)
-    else:
-        stats["no_match"] += 1
-
-
 def scan_stock_list(
     stocks: List[dict],
     *,
     config: Optional[ScanConfig] = None,
 ) -> List[ConsecutiveUpResult]:
     """
-    Scan a list of stocks concurrently and return all matching results.
+    Scan a list of stocks sequentially for reliability.
     """
     cfg = config or get_config()
     fetcher = AkShareFetcher()
     results: List[ConsecutiveUpResult] = []
-    lock = threading.Lock()
     total = len(stocks)
 
-    # Shared stats dict for cross-thread counting
-    stats = {"no_match": 0, "skipped_st": 0, "skipped_kc_cy": 0, "no_data": 0}
+    # Diagnostic tracking
+    diag_seen: List[dict] = []
+    skipped_st = 0
+    skipped_kc_cy = 0
+    failed_fetch = 0
+    no_match = 0
 
-    # Diagnostic: track the first 5 stocks that have data to verify
-    diag_seen: list = []
-    diag_lock = threading.Lock()
-
-    # Use 8 concurrent workers to avoid overwhelming akshare
-    max_workers = min(8, total)
-    logger.info("Scanning %d stocks (workers=%d), consecutive up >= %d days",
-                total, max_workers, cfg.continuous_days)
+    logger.info("Scanning %d stocks sequentially, consecutive up >= %d days",
+                total, cfg.continuous_days)
 
     t_start = time.time()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_scan_one, stock, cfg, fetcher, results, lock, stats, diag_seen): stock
-                   for stock in stocks}
-        for i, future in enumerate(as_completed(futures), 1):
-            if i % 500 == 0 or i == total:
-                elapsed = time.time() - t_start
-                rate = i / elapsed if elapsed > 0 else 0
-                logger.info("Progress: %d/%d, found %d, no_match=%d, rate=%.1f/sec, elapsed=%.0fs",
-                            i, total, len(results), stats["no_match"], rate, elapsed)
+    for idx, stock in enumerate(stocks):
+        code = stock["code"]
+        name = stock["name"]
+        market = stock.get("market", "sh")
+
+        # Filter
+        if cfg.exclude_st and fetcher.is_st_stock(name):
+            skipped_st += 1
+            continue
+        if cfg.exclude_kc_cy and fetcher.is_kc_cy_stock(code):
+            skipped_kc_cy += 1
+            continue
+
+        # Scan
+        t0 = time.time()
+        diag_info: dict = {}
+        result = find_consecutive_up(code, name, market, config=cfg, diag=diag_info)
+        elapsed = time.time() - t0
+
+        # Track first few for diagnostics
+        if len(diag_seen) < 5:
+            diag_seen.append({"code": code, "elapsed": elapsed, **diag_info})
+            if len(diag_seen) == 5:
+                logger.info("DIAG first 5 (showing failure reasons): %s", diag_seen)
+
+        if result:
+            results.append(result)
+            logger.info("[%d] %s %s %d days, +%.2f%% (%.1fs)",
+                        len(results), code, name, result.streak_days,
+                        result.pct_change_total, elapsed)
+        else:
+            no_match += 1
+            if "error" in diag_info:
+                failed_fetch += 1
+
+        # Progress every 500 stocks
+        if (idx + 1) % 500 == 0 or idx + 1 == total:
+            elapsed_total = time.time() - t_start
+            rate = (idx + 1) / elapsed_total if elapsed_total > 0 else 0
+            logger.info("Progress: %d/%d, found=%d, no_match=%d, failed=%d, rate=%.2f/sec, elapsed=%.0fs",
+                        idx + 1, total, len(results), no_match, failed_fetch, rate, elapsed_total)
+
+        # Rate limiting: 0.3s delay between requests
+        time.sleep(cfg.request_delay)
 
     results.sort(key=lambda r: r.pct_change_total, reverse=True)
     elapsed = time.time() - t_start
-    logger.info("Done: %d found out of %d scanned (%.1fs, %.1f/sec)",
+    logger.info("Done: %d found out of %d scanned (%.0fs, %.2f/sec)",
                 len(results), total, elapsed, total / elapsed if elapsed > 0 else 0)
-    logger.info("  skipped_ST=%d, skipped_KC_CY=%d, no_match=%d",
-                stats["skipped_st"], stats["skipped_kc_cy"], stats["no_match"])
+    logger.info("  skipped_ST=%d, skipped_KC_CY=%d, no_match=%d, failed_fetch=%d",
+                skipped_st, skipped_kc_cy, no_match, failed_fetch)
     return results
