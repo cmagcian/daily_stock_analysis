@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from data_provider.akshare_fetcher import AkShareFetcher
+from data_provider.multi_source_fetcher import MultiSourceFetcher
 from data_provider.base import ScanConfig
 from src.config import get_config
 from src.scanner import ConsecutiveUpResult, scan_stock_list
@@ -195,7 +195,7 @@ def main() -> int:
     logger.info("Config: days=%d, market=%s, exclude_st=%s, exclude_kc_cy=%s",
                 cfg.continuous_days, cfg.market, cfg.exclude_st, cfg.exclude_kc_cy)
 
-    fetcher = AkShareFetcher()
+    fetcher = MultiSourceFetcher()
 
     if cfg.stock_list_file:
         logger.info("Reading stock list from: %s", cfg.stock_list_file)
@@ -220,7 +220,7 @@ def main() -> int:
     if not results and args.verbose:
         # Debug: test a few stocks manually
         debug_codes = ["688135", "000001", "600519"]
-        fetcher = AkShareFetcher()
+        fetcher = MultiSourceFetcher()
         for dc in debug_codes:
             try:
                 quotes = fetcher.get_daily_klines(dc, days=10)
