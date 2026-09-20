@@ -60,9 +60,9 @@ def find_consecutive_up(
     try:
         quotes = fetcher.get_daily_klines(code, days=lookback)
     except Exception as e:
-        logger.debug("Failed to fetch %s: %s", code, e)
+        logger.warning("Failed to fetch %s: %s", code, str(e)[:50])
         if diag:
-            diag["error"] = str(e)
+            diag["error"] = str(e)[:100]  # truncate to avoid spam
         return None
 
     if not quotes or len(quotes) < cfg.continuous_days + 1:
@@ -149,7 +149,7 @@ def _scan_one(stock: dict, cfg: ScanConfig, fetcher: AkShareFetcher,
                 pass
 
     if elapsed > 3.0:
-        logger.debug("SLOW: %s took %.1fs", code, elapsed)
+        logger.warning("SLOW: %s took %.1fs", code, elapsed)
 
     if result:
         with lock:
