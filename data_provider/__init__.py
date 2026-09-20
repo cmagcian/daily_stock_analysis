@@ -2,6 +2,6 @@
 """Data provider module."""
 
 from data_provider.base import BaseFetcher, DataFetchError
-from data_provider.akshare_fetcher import AkShareFetcher
+from data_provider.sina_fetcher import SinaFetcher
 
-__all__ = ["BaseFetcher", "DataFetchError", "AkShareFetcher"]
+__all__ = ["BaseFetcher", "DataFetchError", "SinaFetcher"]
