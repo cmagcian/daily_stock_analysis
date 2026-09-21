@@ -10,8 +10,11 @@ Uses sequential scanning for reliability (akshare is slow/unstable).
 from __future__ import annotations
 tqdm = lambda *args, **kwargs: __import__("tqdm").tqdm(*args, disable=True, **kwargs)
 
+
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -118,73 +121,91 @@ def scan_stock_list(
     config: Optional[ScanConfig] = None,
 ) -> List[ConsecutiveUpResult]:
     """
-    Scan a list of stocks sequentially for reliability.
+    Scan stocks concurrently for speed.
     """
     cfg = config or get_config()
     fetcher = MultiSourceFetcher()
     results: List[ConsecutiveUpResult] = []
     total = len(stocks)
+    lock = threading.Lock()
 
     # Diagnostic tracking
     diag_seen: List[dict] = []
+    diag_lock = threading.Lock()
     skipped_st = 0
     skipped_kc_cy = 0
     failed_fetch = 0
     no_match = 0
+    stats_lock = threading.Lock()
 
-    logger.info("Scanning %d stocks sequentially, consecutive up >= %d days",
+    logger.info("Scanning %d stocks concurrently (workers=10), consecutive up >= %d days",
                 total, cfg.continuous_days)
 
-    t_start = time.time()
-
-    for idx, stock in enumerate(stocks):
+    def scan_one(stock: dict) -> Optional[ConsecutiveUpResult]:
+        nonlocal skipped_st, skipped_kc_cy, failed_fetch, no_match
         code = stock["code"]
         name = stock["name"]
         market = stock.get("market", "sh")
 
         # Filter
         if cfg.exclude_st and fetcher.is_st_stock(name):
-            skipped_st += 1
-            continue
+            with stats_lock:
+                skipped_st += 1
+            return None
         if cfg.exclude_kc_cy and fetcher.is_kc_cy_stock(code):
-            skipped_kc_cy += 1
-            continue
+            with stats_lock:
+                skipped_kc_cy += 1
+            return None
 
         # Scan
-        t0 = time.time()
         diag_info: dict = {}
         result = find_consecutive_up(code, name, market, config=cfg, diag=diag_info)
-        elapsed = time.time() - t0
 
-        # Track first few for diagnostics
+        # Track diagnostics
         if len(diag_seen) < 5:
-            diag_seen.append({"code": code, "elapsed": elapsed, **diag_info})
-            if len(diag_seen) == 5:
-                logger.info("DIAG first 5 (showing failure reasons): %s", diag_seen)
+            with diag_lock:
+                if len(diag_seen) < 5:
+                    diag_seen.append({"code": code, **diag_info})
+                    if len(diag_seen) == 5:
+                        logger.info("DIAG first 5: %s", diag_seen)
 
         if result:
-            results.append(result)
-            logger.info("[%d] %s %s %d days, +%.2f%% (%.1fs)",
-                        len(results), code, name, result.streak_days,
-                        result.pct_change_total, elapsed)
+            return result
         else:
-            no_match += 1
-            if "error" in diag_info:
-                failed_fetch += 1
+            with stats_lock:
+                no_match += 1
+                if "error" in diag_info:
+                    failed_fetch += 1
+            return None
 
-        # Progress every 500 stocks
-        if (idx + 1) % 500 == 0 or idx + 1 == total:
-            elapsed_total = time.time() - t_start
-            rate = (idx + 1) / elapsed_total if elapsed_total > 0 else 0
-            logger.info("Progress: %d/%d, found=%d, no_match=%d, failed=%d, rate=%.2f/sec, elapsed=%.0fs",
-                        idx + 1, total, len(results), no_match, failed_fetch, rate, elapsed_total)
+    # Concurrent execution
+    max_workers = 10
+    t_start = time.time()
+    completed = 0
 
-        # Rate limiting: 0.3s delay between requests
-        time.sleep(cfg.request_delay)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(scan_one, stock): stock for stock in stocks}
+        for future in as_completed(futures):
+            completed += 1
+            result = future.result()
+            if result:
+                with lock:
+                    results.append(result)
+                    logger.info("[%d] %s %s %d days, +%.2f%%",
+                                len(results), result.code, result.name,
+                                result.streak_days, result.pct_change_total)
+
+            # Progress every 500 stocks
+            if completed % 500 == 0 or completed == total:
+                elapsed = time.time() - t_start
+                rate = completed / elapsed if elapsed > 0 else 0
+                with stats_lock:
+                    logger.info("Progress: %d/%d, found=%d, no_match=%d, failed=%d, rate=%.1f/sec",
+                                completed, total, len(results), no_match, failed_fetch, rate)
 
     results.sort(key=lambda r: r.pct_change_total, reverse=True)
     elapsed = time.time() - t_start
-    logger.info("Done: %d found out of %d scanned (%.0fs, %.2f/sec)",
+    logger.info("Done: %d found out of %d scanned (%.0fs, %.1f/sec)",
                 len(results), total, elapsed, total / elapsed if elapsed > 0 else 0)
     logger.info("  skipped_ST=%d, skipped_KC_CY=%d, no_match=%d, failed_fetch=%d",
                 skipped_st, skipped_kc_cy, no_match, failed_fetch)
