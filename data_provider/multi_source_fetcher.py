@@ -73,7 +73,7 @@ class MultiSourceFetcher(BaseFetcher):
 
         return []
 
-        def _fetch_from_tencent(self, code: str, days: int, start_date: str, end_date: str) -> List[StockQuote]:
+    def _fetch_from_tencent(self, code: str, days: int, start_date: str, end_date: str) -> List[StockQuote]:
         """Fetch from Tencent via akshare."""
         try:
             import akshare as ak
@@ -124,21 +124,42 @@ class MultiSourceFetcher(BaseFetcher):
         quotes = []
         for _, row in df.iterrows():
             try:
+                # Get date - handle both datetime and string formats
                 date_val = str(row[date_col]).strip()
                 # Normalize date format (handle both "2026-09-18" and "20260918")
                 date_val = date_val.replace("-", "")
-                if len(date_val) == 8 and date_val.isdigit():
-                    quotes.append(StockQuote(
-                        date=date_val,
-                        code=code,
-                        open=float(row[open_col]),
-                        high=float(row[high_col]),
-                        low=float(row[low_col]),
-                        close=float(row[close_col]),
-                        volume=float(row[volume_col]) if volume_col else 0.0,
-                        amount=float(row[amount_col]) if amount_col and amount_col in row.index else 0.0,
-                    ))
-            except (KeyError, ValueError, TypeError):
+                if len(date_val) != 8 or not date_val.isdigit():
+                    continue
+
+                # Get price values with fallback
+                def safe_float(val, default=0.0):
+                    try:
+                        return float(val)
+                    except (ValueError, TypeError):
+                        return default
+
+                open_val = safe_float(row[open_col])
+                high_val = safe_float(row[high_col])
+                low_val = safe_float(row[low_col])
+                close_val = safe_float(row[close_col])
+                volume_val = safe_float(row[volume_col]) if volume_col else 0.0
+                amount_val = safe_float(row[amount_col]) if amount_col and amount_col in row.index else 0.0
+
+                # Skip invalid rows (e.g., suspended stocks with NaN prices)
+                if close_val <= 0 or open_val <= 0:
+                    continue
+
+                quotes.append(StockQuote(
+                    date=date_val,
+                    code=code,
+                    open=open_val,
+                    high=high_val,
+                    low=low_val,
+                    close=close_val,
+                    volume=volume_val,
+                    amount=amount_val,
+                ))
+            except (KeyError, ValueError, TypeError, IndexError):
                 continue
 
         # Filter by date range
@@ -149,7 +170,7 @@ class MultiSourceFetcher(BaseFetcher):
             quotes = quotes[-days:]
         return quotes
 
-        def _fetch_from_sina(self, code: str, days: int, start_date: str, end_date: str) -> List[StockQuote]:
+    def _fetch_from_sina(self, code: str, days: int, start_date: str, end_date: str) -> List[StockQuote]:
         """Fallback: Fetch from Sina Finance API."""
         # Convert code to Sina format
         if code.startswith(("6", "5")):
@@ -212,7 +233,7 @@ class MultiSourceFetcher(BaseFetcher):
             quotes = quotes[-days:]
         return quotes
 
-        def get_stock_list(self, market: Optional[str] = None) -> List[dict]:
+    def get_stock_list(self, market: Optional[str] = None) -> List[dict]:
         """Generate A-share codes from known ranges."""
         from data.code_ranges import generate_all_codes
         filter_markets = ["sh", "sz"] if market in (None, "all", "") else [market]
