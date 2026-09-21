@@ -77,6 +77,8 @@ class MultiSourceFetcher(BaseFetcher):
         """Fetch from Tencent via akshare."""
         try:
             import akshare as ak
+            import tqdm
+            tqdm.tqdm = lambda *args, **kwargs: __import__("tqdm").tqdm(*args, disable=True, **kwargs)
         except ImportError:
             logger.warning("akshare not installed")
             return []
