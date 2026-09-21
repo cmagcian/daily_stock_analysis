@@ -8,6 +8,7 @@ Uses sequential scanning for reliability (akshare is slow/unstable).
 """
 
 from __future__ import annotations
+tqdm = lambda *args, **kwargs: __import__("tqdm").tqdm(*args, disable=True, **kwargs)
 
 import logging
 import time
